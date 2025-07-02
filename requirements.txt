@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+jinja2
+python-multipart
+fpdf
+pymongo 
+git+https://github.com/openai/whisper.git
+ffmpeg-python
+torch  # Required by Whisper
