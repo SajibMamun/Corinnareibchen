@@ -1,14 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8" />
     <title>Upload Video</title>
 </head>
 <body>
-    <h1>Upload Video to MongoDB</h1>
+    <h1>Upload a Video File</h1>
     <form action="/upload_video/" enctype="multipart/form-data" method="post">
-        <input type="file" name="video" accept="video/*" required />
-        <button type="submit">Upload</button>
+        <input name="video" type="file">
+        <input type="submit" value="Upload">
     </form>
 </body>
 </html>
