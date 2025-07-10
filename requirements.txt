@@ -7,3 +7,13 @@ pymongo
 git+https://github.com/openai/whisper.git
 ffmpeg-python
 torch  # Required by Whisper
+chromadb
+langchain 
+langchain-google-genai 
+python-dotenv
+protobuf
+python-dotenv
+PyPDF2
+pydantic
+google-generativeai
+python-multipart
