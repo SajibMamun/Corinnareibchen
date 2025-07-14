@@ -83,6 +83,8 @@ class UnicodePDF(FPDF):
         self.cell(0, 10, f"Video Name: {self.video_filename}", ln=True, align="C")
         self.ln(5)
 
+
+
 def process_video_from_file(object_id: str):
     try:
         video_doc = video_collection.find_one({"_id": ObjectId(object_id)})
@@ -99,12 +101,15 @@ def process_video_from_file(object_id: str):
     if not os.path.exists(video_path):
         raise Exception("Video file not found")
 
+    # Extract only original filename without video_id prefix
+    original_filename = "_".join(video_filename.split("_")[1:])
+
     audio_path = os.path.splitext(video_path)[0] + ".wav"
     extract_audio(video_path, audio_path)
     segments = transcribe_whisper(audio_path)
     os.remove(audio_path)
 
-    pdf = UnicodePDF(video_id, object_id, video_filename)
+    pdf = UnicodePDF(video_id, object_id, original_filename)
     pdf.add_font("DejaVu", "", FONT_FILE, uni=True)
     pdf.set_font("DejaVu", size=12)
     pdf.add_page()
@@ -114,20 +119,28 @@ def process_video_from_file(object_id: str):
         pdf.multi_cell(0, 10, line)
         pdf.ln(2)
 
-    pdf_filename = f"{os.path.splitext(video_filename)[0]}_subtitles_{video_id}.pdf"
+    pdf_filename = f"{os.path.splitext(original_filename)[0]}_subtitles_{video_id}.pdf"
     pdf_path = os.path.join(PDF_FOLDER, pdf_filename)
     pdf.output(pdf_path)
 
-    subtitles_collection.insert_one({
+    insert_result = subtitles_collection.insert_one({
         "video_id": video_id,
         "video_object_id": ObjectId(object_id),
-        "video_filename": video_filename,
+        "video_filename": original_filename,
         "pdf_filename": pdf_filename,
         "transcript": segments,
         "created_at": datetime.utcnow()
     })
 
-    return pdf_path, pdf_filename
+    subtitle_object_id = insert_result.inserted_id
+    print(f"Subtitle PDF ObjectId: {subtitle_object_id}")  # print in terminal
+
+    return pdf_path, pdf_filename, subtitle_object_id
+
+
+
+
+
 
 def extract_text_from_pdf_path(pdf_path):
     if not os.path.exists(pdf_path):
@@ -155,6 +168,8 @@ def store_embeddings_for_pdf(object_id: str, text_chunks):
             metadatas=[{"pdf_object_id": object_id}],
             ids=[uid]
         )
+
+
 
 # ───────────── FastAPI App & Router Setup ─────────────
 app = FastAPI(title="Video Subtitle & RAG PDF Bot")
@@ -188,21 +203,31 @@ async def upload_video(video: UploadFile = File(...)):
         "uploaded_at": datetime.utcnow()
     })
 
+    video_object_id = result.inserted_id  # Store ObjectId
+    print(f"Video ObjectId: {video_object_id}")  # Print ObjectId to console/log
+
     return {
         "message": "Video uploaded successfully",
         "video_id": video_id,
-        "object_id": str(result.inserted_id),
-        "next_step": f"/process_from_file/{str(result.inserted_id)}"
+        "object_id": str(video_object_id),
+        "next_step": f"/process_from_file/{str(video_object_id)}"
     }
+
 
 @router.post("/process_from_file/{object_id}")
 def process_from_file(object_id: str):
     try:
-        pdf_path, pdf_filename = process_video_from_file(object_id)
+        pdf_path, pdf_filename, subtitle_object_id = process_video_from_file(object_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    print(f"PDF MongoDB ObjectId (from API): {subtitle_object_id}")  # 👈 Print in route handler too if needed
+
     return FileResponse(pdf_path, filename=pdf_filename, media_type="application/pdf")
+
+
+
+
 
 @router.get("/pdf/{object_id}")
 def download_pdf(object_id: str):
@@ -266,10 +291,16 @@ def print_collections():
 
     return {"videos": videos, "subtitles": subtitles}
 
+
+
+
+
 # ───────────── PDF Embedding & RAG Question Answering Endpoints ─────────────
 
 class QuestionRequest(BaseModel):
     question: str
+
+
 
 @router.post("/api/load_pdf_mongo_to_chroma/{object_id}")
 def load_pdf_mongo_to_chroma(object_id: str = Path(..., description="MongoDB ObjectId of the PDF subtitles document")):
@@ -290,7 +321,13 @@ def load_pdf_mongo_to_chroma(object_id: str = Path(..., description="MongoDB Obj
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF from MongoDB: {str(e)}")
 
-@router.post("/api/ask_video_question/{object_id}")
+
+
+
+
+
+
+@router.post("/api/ask_question_from_video/{object_id}")
 async def ask_question(object_id: str, request: QuestionRequest):
     question = request.question.strip()
     if not question:
@@ -323,8 +360,22 @@ Just give specific answer"""
 
 # ───────────── Root Route: Redirect to chat.html ─────────────
 
+
+
+
+
+
+
+
+
+
+
+
+
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse(url="/static/chat.html")
 
 app.include_router(router)
+
+
