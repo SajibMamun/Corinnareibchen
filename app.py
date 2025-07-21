@@ -171,6 +171,8 @@ def store_embeddings_for_pdf(object_id: str, text_chunks):
 
 
 
+
+
 # ───────────── FastAPI App & Router Setup ─────────────
 app = FastAPI(title="Video Subtitle & RAG PDF Bot")
 app.add_middleware(
@@ -181,6 +183,10 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 router = APIRouter()
+
+
+
+
 
 # ───────────── Video Upload and Processing Endpoints ─────────────
 
@@ -221,9 +227,11 @@ def process_from_file(object_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    print(f"PDF MongoDB ObjectId (from API): {subtitle_object_id}")  # 👈 Print in route handler too if needed
-
-    return FileResponse(pdf_path, filename=pdf_filename, media_type="application/pdf")
+    return JSONResponse(content={
+        "pdf_path": pdf_path,
+        "pdf_filename": pdf_filename,
+        "subtitle_object_id": str(subtitle_object_id)
+    })
 
 
 
@@ -251,6 +259,8 @@ def get_transcript(object_id: str):
         return JSONResponse(content=doc)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @router.delete("/delete/{object_id}")
 def delete_video_data(object_id: str):
@@ -359,11 +369,6 @@ Just give specific answer"""
         raise HTTPException(500, f"Error generating answer: {e}")
 
 # ───────────── Root Route: Redirect to chat.html ─────────────
-
-
-
-
-
 
 
 
