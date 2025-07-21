@@ -38,6 +38,9 @@ try:
     db = client["crryptoEducation"]
     video_collection = db["video"]
     subtitles_collection = db["subtitles"]
+    global_pdfs_collection = db["global_pdfs"]
+
+
 except errors.ServerSelectionTimeoutError as err:
     raise Exception(f"Could not connect to MongoDB: {err}")
 
@@ -47,10 +50,18 @@ whisper_model = whisper.load_model("base")
 # ───────────── ChromaDB Setup ─────────────
 CHROMA_DB_DIR = "chroma_db"
 COLLECTION_NAME = "video_pdf_knowledge"
+GLOBAL_COLLECTION_NAME = "global_pdf_knowledge"
+
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
 collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+global_knowledge_collection = chroma_client.get_or_create_collection(name=GLOBAL_COLLECTION_NAME)
 embeddings_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+
+
+
+
+
 
 # ───────────── Utility Functions ─────────────
 
@@ -367,20 +378,112 @@ Just give specific answer"""
         return {"answer": response.text.strip()}
     except Exception as e:
         raise HTTPException(500, f"Error generating answer: {e}")
+    
+
+
+
+#-------------------------------Global Knowledge--------------------------------
+@router.post("/upload_global_pdf/")
+async def upload_global_pdf(files: list[UploadFile] = File(...)):
+    uploaded = []
+
+    for file in files:
+        if not file.filename.lower().endswith(".pdf"):
+            continue
+
+        pdf_id = str(uuid.uuid4())[:8]
+        pdf_filename = f"{pdf_id}_{file.filename}"
+        pdf_path = os.path.join(PDF_FOLDER, pdf_filename)
+
+        # Save PDF to disk
+        with open(pdf_path, "wb") as f:
+            f.write(await file.read())
+
+        # Store in MongoDB
+        result = global_pdfs_collection.insert_one({
+            "pdf_id": pdf_id,
+            "pdf_filename": pdf_filename,
+            "pdf_path": pdf_path,
+            "uploaded_at": datetime.utcnow()
+        })
+        object_id = result.inserted_id
+
+        # Extract and Embed
+        try:
+            text = extract_text_from_pdf_path(pdf_path)
+            chunks = chunk_text(text)
+
+            for chunk in chunks:
+                uid = str(uuid.uuid4())
+                embedding = embeddings_model.embed_documents([chunk])
+                global_knowledge_collection.add(
+                    documents=[chunk],
+                    embeddings=embedding,
+                    metadatas=[{"pdf_object_id": str(object_id)}],
+                    ids=[uid]
+                )
+
+            uploaded.append({
+                "pdf_filename": pdf_filename,
+                "object_id": str(object_id)
+            })
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to process {file.filename}: {e}")
+
+    return {
+        "message": "Global PDFs processed and embedded",
+        "uploaded": uploaded
+    }
+
+
+
+#------------global bot----------------
+
+class GlobalQuestionRequest(BaseModel):
+    question: str
+
+@router.post("/ask_global_question/")
+async def ask_global_question(request: GlobalQuestionRequest):
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(400, "Question cannot be empty.")
+
+    try:
+        query_embedding = embeddings_model.embed_query(question)
+        results = global_knowledge_collection.query(
+            query_embeddings=[query_embedding],
+            n_results=4
+        )
+        docs = results.get("documents", [[]])[0]
+        context = "\n\n".join(docs).strip()
+
+        prompt = f"""Answer the question based on the context below.
+
+Context:
+{context}
+
+Question: {question}
+
+Just give specific answer."""
+
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(prompt)
+
+        return {"answer": response.text.strip()}
+
+    except Exception as e:
+        raise HTTPException(500, f"Error answering from global knowledge: {e}")
+
+
+
+
 
 # ───────────── Root Route: Redirect to chat.html ─────────────
-
-
-
-
-
-
-
 
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse(url="/static/chat.html")
 
 app.include_router(router)
-
 
