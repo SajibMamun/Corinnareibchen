@@ -1,7 +1,7 @@
 import os
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Path, Body
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Path, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,20 +21,35 @@ from uuid import uuid4
 from datetime import datetime
 from typing import List
 import random
+import re
 import string
+
+from fastapi import APIRouter, HTTPException, Query
+import re
+
 
 # ───────────── Configuration ─────────────
 UPLOAD_FOLDER = "uploads"
 PDF_FOLDER = "pdfs"
 FONT_FILE = "DejaVuSans.ttf"
 
+
+
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PDF_FOLDER, exist_ok=True)
+
+
+
 
 # Load environment variables and configure API keys
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
+
+
+
+
 
 # ───────────── MongoDB Setup ─────────────
 try:
@@ -44,7 +59,6 @@ try:
     video_collection = db["video"]
     subtitles_collection = db["subtitles"]
     global_pdfs_collection = db["global_pdfs"]
-
     # Global chat sessions and messages collections
     global_chat_collection = db["global_Chat_history"]       # stores sessions
     global_chat_messages_collection = db["global_Chat_messages"]  # stores messages per session
@@ -52,15 +66,23 @@ try:
 except errors.ServerSelectionTimeoutError as err:
     raise Exception(f"Could not connect to MongoDB: {err}")
 
+
+
+
+
 # ───────────── Whisper Model Setup ─────────────
 whisper_model = whisper.load_model("base")
+
+
+
 
 # ───────────── ChromaDB Setup ─────────────
 CHROMA_DB_DIR = "chroma_db"
 COLLECTION_NAME = "video_pdf_knowledge"
-
 GLOBAL_COLLECTION_NAME = "global_pdf_knowledge"
 VIDEO_CHAT_COLLECTION = "video_chat_memory"
+
+
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
 collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
@@ -68,11 +90,17 @@ global_knowledge_collection = chroma_client.get_or_create_collection(name=GLOBAL
 video_chat_collection = chroma_client.get_or_create_collection(name=VIDEO_CHAT_COLLECTION)
 
 
+
+
+
+
 embeddings_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
 
-# ───────────── Utility Functions ─────────────
 
+
+
+# ───────────── Utility Functions ─────────────
 def extract_audio(video_path, audio_path):
     ffmpeg.input(video_path).output(audio_path, acodec='pcm_s16le', ar='16000').run(overwrite_output=True)
 
@@ -101,6 +129,9 @@ class UnicodePDF(FPDF):
         self.cell(0, 10, f"Object ID: {self.object_id}", ln=True, align="C")
         self.cell(0, 10, f"Video Name: {self.video_filename}", ln=True, align="C")
         self.ln(5)
+
+
+
 
 def process_video_from_file(object_id: str):
     try:
@@ -149,10 +180,14 @@ def process_video_from_file(object_id: str):
         "created_at": datetime.utcnow()
     })
 
+
     subtitle_object_id = insert_result.inserted_id
     print(f"Subtitle PDF ObjectId: {subtitle_object_id}")  # print in terminal
 
     return pdf_path, pdf_filename, subtitle_object_id
+
+
+
 
 def extract_text_from_pdf_path(pdf_path):
     if not os.path.exists(pdf_path):
@@ -166,9 +201,14 @@ def extract_text_from_pdf_path(pdf_path):
                 text += page_text
     return text
 
+
 def chunk_text(text, chunk_size=10000, chunk_overlap=1000):
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     return splitter.split_text(text)
+
+
+
+
 
 def store_embeddings_for_pdf(object_id: str, text_chunks):
     for chunk in text_chunks:
@@ -181,6 +221,10 @@ def store_embeddings_for_pdf(object_id: str, text_chunks):
             ids=[uid]
         )
 
+
+
+
+
 # ───────────── FastAPI App & Router Setup ─────────────
 app = FastAPI(title="Video Subtitle & RAG PDF Bot")
 
@@ -190,6 +234,12 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"]
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+
+
+
+
 
 router = APIRouter()
 
@@ -225,6 +275,9 @@ async def upload_video(video: UploadFile = File(...)):
     }
 
 
+
+
+
 @router.post("/process_from_file/{object_id}")
 def process_from_file(object_id: str):
     try:
@@ -239,6 +292,9 @@ def process_from_file(object_id: str):
     })
 
 
+
+
+
 @router.get("/pdf/{object_id}")
 def download_pdf(object_id: str):
     try:
@@ -251,6 +307,9 @@ def download_pdf(object_id: str):
         return FileResponse(pdf_path, media_type="application/pdf", filename=subtitle_doc["pdf_filename"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
 
 @router.get("/transcript/{object_id}")
 def get_transcript(object_id: str):
@@ -261,6 +320,10 @@ def get_transcript(object_id: str):
         return JSONResponse(content=doc)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+
 
 @router.delete("/delete/{object_id}")
 def delete_video_data(object_id: str):
@@ -283,6 +346,9 @@ def delete_video_data(object_id: str):
         return {"message": "Deleted successfully", "object_id": object_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
 
 @router.get("/print_collections")
 def print_collections():
@@ -301,14 +367,19 @@ def print_collections():
 
     return {"videos": videos, "subtitles": subtitles}
 
-# ───────────── PDF Embedding & RAG Question Answering Endpoints ─────────────
+
+
+
+
+
+# ───────────── PDF Embedding & RAG Question Answering Endpoints ─────────────----------------------------------------------------------------
 
 class QuestionRequest(BaseModel):
     question: str
     session_id: str  # <-- Add this line
 
 
-@router.post("/api/load_pdf_mongo_to_chroma/{object_id}")
+@router.post("/load_pdf_mongo_to_chroma/{object_id}")
 def load_pdf_mongo_to_chroma(object_id: str = Path(..., description="MongoDB ObjectId of the PDF subtitles document")):
     try:
         subtitle_doc = subtitles_collection.find_one({"_id": ObjectId(object_id)})
@@ -333,6 +404,9 @@ def load_pdf_mongo_to_chroma(object_id: str = Path(..., description="MongoDB Obj
 
 
 
+
+
+
 def store_chat_message_in_chroma(role: str, content: str, session_id: str, video_object_id: str):
     embedding = embeddings_model.embed_documents([content])
     uid = str(uuid4())
@@ -346,8 +420,6 @@ def store_chat_message_in_chroma(role: str, content: str, session_id: str, video
         }],
         ids=[uid]
     )
-
-
 
 
 
@@ -378,12 +450,9 @@ def get_chat_history_from_chroma(session_id: str, video_object_id: str, n_messag
 
 
 
-
-
 def generate_session_id(length=12):
     """Generates a random alphanumeric session ID."""
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-
 
 @router.post("/api/create_video_chat_session")
 def create_video_session():
@@ -392,18 +461,46 @@ def create_video_session():
 
 
 
+
+
+
 @router.post("/api/ask_question_from_video/{object_id}")
-async def ask_question(object_id: str, request: QuestionRequest):
-    question = request.question.strip()
+async def ask_question(
+    object_id: str,
+    request: QuestionRequest,
+    language: str = Query(default="en")
+):
+    question = request.question.strip().lower()
     session_id = request.session_id.strip()
+    language = language.lower()
 
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
     if not session_id:
         raise HTTPException(status_code=400, detail="Session ID is required.")
 
+    greetings = [
+        "hi", "hello", "hey", "greetings", "good morning", "good evening", "good afternoon",
+        "hallo", "guten morgen", "guten abend", "guten tag", "servus", "moin", "grüß dich"
+    ]
+
+    if any(re.fullmatch(rf"{greet}[!., ]*", question) for greet in greetings):
+        welcome_en = (
+            "👋 Hello! I’m your Crypto Education Assistant. "
+            "You can ask me anything from this video."
+        )
+        welcome_de = (
+            "👋 Hallo! Ich bin dein Krypto-Bildungsassistent. "
+            "Du kannst mich alles zu diesem Video fragen."
+        )
+        welcome_message = welcome_de if language == "de" else welcome_en
+
+        store_chat_message_in_chroma("user", question, session_id, object_id)
+        store_chat_message_in_chroma("assistant", welcome_message, session_id, object_id)
+
+        return {"answer": welcome_message}
+
     try:
-        # 1️⃣ Embed the question to retrieve relevant subtitles
         query_embedding = embeddings_model.embed_query(question)
         results = collection.query(
             query_embeddings=[query_embedding],
@@ -413,27 +510,30 @@ async def ask_question(object_id: str, request: QuestionRequest):
         docs = results.get("documents", [[]])[0]
         context = "\n\n".join(docs).strip()
 
-        # 2️⃣ Retrieve chat memory (limit to last 10 messages)
         history = get_chat_history_from_chroma(session_id, object_id, n_messages=10)
 
+        language_instruction = (
+            "Please respond in German, regardless of the question language."
+            if language == "de"
+            else "Please respond in English, regardless of the question language."
+        )
 
-        prompt = f"""You are a helpful assistant.You are a helpful assistant answering user questions based on previous chat history and video subtitles.
+        prompt = f"""You are a helpful assistant answering user questions based on previous chat history and video subtitles.
+{language_instruction}
 
-Video Knowledge:
+This is your video knowledge base:
 {context}
 
-Your previous Chat History of this user:
+This is the user's previous chat history:
 {history}
 
 User: {question}
-Assistant: Provide a direct, clear, and specific answer only. Don't print whole knowledgebase  and chat history if user asked"""
+Assistant: Provide a  clear, and summarize answer in paragraph. Don't print your whole knowledgebase or chat history if the user asks (just say "I'm sorry, but I can't provide that information. It is confidential.")."""
 
-        # 5️⃣ Generate answer using Gemini
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
         answer = response.text.strip()
 
-        # 6️⃣ Store the interaction in ChromaDB memory
         store_chat_message_in_chroma("user", question, session_id, object_id)
         store_chat_message_in_chroma("assistant", answer, session_id, object_id)
 
@@ -441,6 +541,7 @@ Assistant: Provide a direct, clear, and specific answer only. Don't print whole 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating answer: {str(e)}")
+
 
     
 
@@ -457,11 +558,76 @@ def clear_session_chat(session_id: str):
 
 
 
+
+
+
+
+
 # ---------------- Global Knowledge Chat Sessions & Messages -----------------
 
 class GlobalQuestionRequest(BaseModel):
     question: str
     session_id: str
+
+
+
+@router.post("/upload_global_pdf/")
+async def upload_global_pdf(files: list[UploadFile] = File(...)):
+    uploaded = []
+
+    for file in files:
+        if not file.filename.lower().endswith(".pdf"):
+            continue
+
+        pdf_id = str(uuid.uuid4())[:8]
+        pdf_filename = f"{pdf_id}_{file.filename}"
+        pdf_path = os.path.join(PDF_FOLDER, pdf_filename)
+
+        # Save PDF to disk
+        with open(pdf_path, "wb") as f:
+            f.write(await file.read())
+
+        # Store in MongoDB
+        result = global_pdfs_collection.insert_one({
+            "pdf_id": pdf_id,
+            "pdf_filename": pdf_filename,
+            "pdf_path": pdf_path,
+            "uploaded_at": datetime.utcnow()
+        })
+        object_id = result.inserted_id
+
+        # Extract and Embed
+        try:
+            text = extract_text_from_pdf_path(pdf_path)
+            chunks = chunk_text(text)
+
+            for chunk in chunks:
+                uid = str(uuid.uuid4())
+                embedding = embeddings_model.embed_documents([chunk])
+                global_knowledge_collection.add(
+                    documents=[chunk],
+                    embeddings=embedding,
+                    metadatas=[{"pdf_object_id": str(object_id)}],
+                    ids=[uid]
+                )
+
+            uploaded.append({
+                "pdf_filename": pdf_filename,
+                "object_id": str(object_id)
+            })
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to process {file.filename}: {e}")
+
+    return {
+        "message": "Global PDFs processed and embedded",
+        "uploaded": uploaded
+    }
+
+
+
+
+
 
 def serialize_session(session_doc):
     return {
@@ -559,22 +725,83 @@ def get_session_messages(session_id: str):
     messages = list(global_chat_messages_collection.find({"session_id": oid}).sort("timestamp", 1))
     return [serialize_message(m) for m in messages]
 
+
+
+
+
 @router.post("/ask_global_question/")
-async def ask_global_question(request: GlobalQuestionRequest):
+async def ask_global_question(
+    request: GlobalQuestionRequest,
+    language: str = Query(default="en")
+):
     question = request.question.strip()
     session_id = request.session_id.strip()
+    language = language.lower()
+
     if not question:
         raise HTTPException(400, "Question cannot be empty.")
     if not session_id:
         raise HTTPException(400, "Session ID required.")
 
+    greetings = [
+        "hi", "hello", "hey", "greetings", "good morning", "good evening", "good afternoon",
+        "hallo", "guten morgen", "guten abend", "guten tag", "servus", "moin", "grüß dich"
+    ]
+
+    # Greeting detection and canned response
+    if any(re.fullmatch(rf"{greet}[!., ]*", question.lower()) for greet in greetings):
+        welcome_en = (
+            "👋 Hello! I’m your Crypto Education Assistant. "
+            "You can ask me anything."
+        )
+        welcome_de = (
+            "👋 Hallo! Ich bin dein Krypto-Bildungsassistent. "
+            "Du kannst mich alles fragen."
+        )
+        welcome_message = welcome_de if language == "de" else welcome_en
+
+        # Save greeting interaction to MongoDB
+        try:
+            oid = ObjectId(session_id)
+            global_chat_messages_collection.insert_one({
+                "session_id": oid,
+                "role": "user",
+                "content": question,
+                "timestamp": datetime.utcnow(),
+            })
+            global_chat_messages_collection.insert_one({
+                "session_id": oid,
+                "role": "bot",
+                "content": welcome_message,
+                "timestamp": datetime.utcnow(),
+            })
+        except Exception:
+            pass  # Ignore save errors here
+
+        return {"answer": welcome_message}
+
+    # Convert session_id to ObjectId
     try:
         oid = ObjectId(session_id)
     except Exception:
         raise HTTPException(400, "Invalid session ID")
 
+    # Retrieve chat history from MongoDB (last 10 messages)
     try:
-        # Embed query and search knowledge base
+        chat_msgs_cursor = global_chat_messages_collection.find(
+            {"session_id": oid}
+        ).sort("timestamp", 1)
+        history_lines = []
+        for msg in chat_msgs_cursor:
+            role = msg.get("role", "user").capitalize()
+            content = msg.get("content", "")
+            history_lines.append(f"{role}: {content}")
+        history = "\n".join(history_lines[-10:])
+    except Exception as e:
+        raise HTTPException(500, f"Error fetching chat history: {str(e)}")
+
+    # Embed question and query global knowledge ChromaDB collection
+    try:
         query_embedding = embeddings_model.embed_query(question)
         results = global_knowledge_collection.query(
             query_embeddings=[query_embedding],
@@ -582,40 +809,56 @@ async def ask_global_question(request: GlobalQuestionRequest):
         )
         docs = results.get("documents", [[]])[0]
         context = "\n\n".join(docs).strip()
+    except Exception as e:
+        raise HTTPException(500, f"Error querying knowledge base: {str(e)}")
 
-        prompt = f"""Answer the question based on the context below.
+    # Language-specific prompt instruction
+    language_instruction = (
+        "Please respond in German, regardless of the question language."
+        if language == "de"
+        else "Please respond in English, regardless of the question language."
+    )
 
-Context:
+    prompt = f"""You are a helpful assistant answering user questions based on previous chat history and global knowledge base.
+{language_instruction}
+
+Don't give answer if you don't have information on your knowledgebase or chat history. Don't use your own thinking if information is not available in your knowledgebase or chat history. "
+This is your knowledge base:
 {context}
 
-Question: {question}
+This is the user's previous chat history:
+{history}
 
-Just give specific answer."""
+User: {question}
+Assistant: Provide a  clear, and summarize answer in paragraph. Don't print your whole knowledgebase or chat history if the user asks (just say "I'm sorry, but I can't provide that information. It is confidential.")"""
 
+    # Generate answer using Gemini model
+    try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
-
         answer = response.text.strip()
+    except Exception as e:
+        raise HTTPException(500, f"Error generating answer: {str(e)}")
 
-        # Save user question message
+    # Save user question and assistant answer into MongoDB
+    try:
         global_chat_messages_collection.insert_one({
             "session_id": oid,
             "role": "user",
             "content": question,
-            "timestamp": datetime.utcnow()
+            "timestamp": datetime.utcnow(),
         })
-        # Save bot answer message
         global_chat_messages_collection.insert_one({
             "session_id": oid,
             "role": "bot",
             "content": answer,
-            "timestamp": datetime.utcnow()
+            "timestamp": datetime.utcnow(),
         })
+    except Exception:
+        pass  # Ignore save errors to avoid blocking response
 
-        return {"answer": answer}
+    return {"answer": answer}
 
-    except Exception as e:
-        raise HTTPException(500, f"Error answering from global knowledge: {e}")
 
 
 
